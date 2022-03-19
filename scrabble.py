@@ -1,10 +1,9 @@
 from itertools import permutations
 from time import perf_counter
 
-BOARD_FILE = 'res/small_board.txt'
-REF_BOARD_FILE = 'res/small_ref_board.txt'
-SDICT_FILE = 'res/CSW22.txt'
-SDICT = None
+BOARD_FILE = 'res/test_board.txt'
+REF_BOARD_FILE = 'res/ref_board.txt'
+WORD_LIST_FILE = 'res/CSW22.txt'
 BOARD = None
 REF_BOARD = None
 
@@ -17,22 +16,20 @@ def main():
     #       account for limited number of tiles - don't have as many as we want
     #
     #       make sure multiple blank tiles in one word can be handled
-    global SDICT, BOARD, REF_BOARD
-
-    start_run_time = perf_counter()
+    global BOARD, REF_BOARD
 
     # use '*' for blank tile
-    letters_in_hand = list('tes*')
+    letters_in_hand = list('rstlne*')
     min_word_sz = 1
-    max_word_sz = 7 # should be <= len(BOARD[0]) (row length)
+    max_word_sz = 8 # should be <= len(BOARD[0]) (row length)
 
     bingo_size = 7
     bingo_bonus = 50
 
     # load Scrabble dictionary
-    load_dictionary(SDICT_FILE)
-    if SDICT is None:
-        print('Scrabble dictionary failed to load: exiting')
+    word_list = load_word_list(WORD_LIST_FILE)
+    if word_list is None:
+        print('Scrabble word list failed to load: exiting')
         return
 
     # load board
@@ -57,24 +54,26 @@ def main():
     
     # generate a list of all valid horizontal spaces on the board
     spaces = generate_spaces_h(min_word_sz, max_word_sz, len(letters_in_hand))
-    #[print(s) for s in spaces]
-    #print()
 
     # fill each horizontal space with a list of valid Scrabble words we can play with out letters
-    filled_spaces = fill_all_spaces(min_word_sz, letters_in_hand, spaces)
+    filled_spaces = fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list)
 
     # make sure horizontal words are also valid in any vertical words created
-    # TODO: filter out spaces with 'valid_words_final' == {}
     for space in filled_spaces:
-        space['valid_words_final'] = check_valid_words_in_v_spaces(space)
+        space['valid_words_final'] = check_valid_words_in_v_spaces(space, word_list)
 
     # calculate highest scoring horizontal word in each space
     filled_spaces = find_highest_scoring_word_in_each_space(filled_spaces)
-    #print_spaces_line_by_line(filled_spaces)
+
+    num_additional_print = 20
+    print()
+    print(f'-------- top {num_additional_print} space(s) --------')
+    print()
+
+    # TODO create a FIFO(?) queue
+    print_spaces_line_by_line(filled_spaces)
 
 
-
-    # print high scoring space(s)
     
     high_scoring_spaces = []
     for space in filled_spaces:
@@ -98,16 +97,12 @@ def main():
         print('no high scoring space found')
     else:
         print_spaces_line_by_line(high_scoring_spaces)
-
-
-    print()
-    print(f'total run time: {perf_counter() - start_run_time}')
     print()
 
 
 # takes in a 'space', returns a list of the 'valid_words' of 'space' that also make valid
 #   words in each 'v_space'
-def check_valid_words_in_v_spaces(space):
+def check_valid_words_in_v_spaces(space, word_list):
     # don't need to check v_space if there are none
     if len(space['v_spaces']) < 1:
         return dict.fromkeys(space['valid_words'])
@@ -135,9 +130,8 @@ def check_valid_words_in_v_spaces(space):
             v_blank_index = v_space['ltrs'].index(' ')
 
             v_word_to_try = ''.join(v_space['ltrs']).replace(' ', letter_to_put_in_v_blank)
-            if is_valid_word(v_word_to_try):
+            if is_valid_word(v_word_to_try, word_list):
                 if blank_index == index + 1:
-                    # TODO: check for multiple blank tiles
                     # need to add back '*' blank tile indicator
                     v_word_to_try = list(v_word_to_try)
 
@@ -236,9 +230,9 @@ def calculate_points(letters, ref_board_space):
             # still need to check for word bonuses, however
             rev_ref_space.insert(c, '*')
             if rev_ref_space[c+1] == 'T':
-                word_bonus += 2
+                word_bonus += 3
             elif rev_ref_space[c+1] == 'D':
-                word_bonus += 1
+                word_bonus += 2
             skip_next = True
         else:
             if not skip_next:
@@ -247,9 +241,9 @@ def calculate_points(letters, ref_board_space):
                 # check for bonuses
                 ref_letter = rev_ref_space[c]
                 if ref_letter == 'T':
-                    word_bonus += 2
+                    word_bonus += 3
                 elif ref_letter == 'D':
-                    word_bonus += 1
+                    word_bonus += 2
                 elif ref_letter == 't':
                     letter_points *= 3
                 elif ref_letter == 'd':
@@ -259,7 +253,8 @@ def calculate_points(letters, ref_board_space):
             else:
                 skip_next = False
 
-    points += points * word_bonus
+    if word_bonus > 0:
+        points *= word_bonus
 
     return points
 
@@ -270,7 +265,7 @@ def calculate_points(letters, ref_board_space):
 # [ {'start': [0,0], 'size': 2, 'num_blank': 1, 'valid_words': ['as', 'is'], ... },
 #   { ... },
 #   { ... } ]
-def fill_all_spaces(min_word_sz, letters_in_hand, spaces):
+def fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list):
     global BOARD
 
     filled_spaces = []
@@ -287,7 +282,7 @@ def fill_all_spaces(min_word_sz, letters_in_hand, spaces):
         cur_space += 1
 
         num_blank = space['num_blank']
-        words = fill_space(space, perms[num_blank])
+        words = fill_space(space, perms[num_blank], word_list)
 
         if words is not None and len(words) > 0:
             # add new 'valid_words' entry to 'space'
@@ -301,27 +296,23 @@ def fill_all_spaces(min_word_sz, letters_in_hand, spaces):
 # returns a list containing all such permutations that are also valid Scrabble words
 # 'space' can be blank or contain existing characters
 # returns None if number of blank spaces in 'space' is not equal to number of letters
-def fill_space(space, letter_list):
+def fill_space(space, letter_list, word_list):
     filled = []
-
-    start_time = perf_counter()
 
     # fill 'space' with 'letter_list'
     # return a list of these filled spaces that are valid Scrabble words
     for letters_to_try in letter_list:
 
         # horizontal word is good
-        word = letters_valid_in_space(letters_to_try, space)
+        word = letters_valid_in_space(letters_to_try, space, word_list)
         if word is not None:
             filled.append(word)
-
-    print(f'for loop took: {perf_counter()-start_time} for {len(letter_list)} iterations')
 
     return filled
 
 
 # returns the word formed by putting 'letters' in 'space' if it's valid, otherwise None
-def letters_valid_in_space(letters, space):
+def letters_valid_in_space(letters, space, word_list):
     BLANK_SPACE_CHAR = ' '
     new_space = []
     space_ltrs = space['ltrs']
@@ -342,8 +333,9 @@ def letters_valid_in_space(letters, space):
     else:
         temp = word
 
-    if (is_valid_word(temp)):
+    if (is_valid_word(temp, word_list)):
         return word
+
     return None
 
 
@@ -509,18 +501,100 @@ def permute_letters(letters, size):
 
 
 # returns 'True' if 'word' is a valid Scrabble word
-def is_valid_word(word):
-    global SDICT
-
-    return word.lower() in SDICT
+def is_valid_word(word, word_list):
+    return word in word_list[word[0]]
 
 
-def load_dictionary(dict_file):
-    global SDICT
+# reads a list of valid Scrabble words
+# returns a dictionary mapping each letter to a Set of all words starting with that letter
+# {'a': {...}, 'b': {...}, ...}
+def load_word_list(word_list_file):
+    word_list = {}
 
-    with open(dict_file, 'r') as file:
+    with open(word_list_file, 'r') as file:
         words = file.readlines()
-        SDICT = [word.strip().lower() for word in words]
+        cur_word_list = set({}) #cur_word_list = []
+        cur_letter = None
+
+        for word in words:
+            word = word.strip().lower()
+
+            if cur_letter is None:
+                cur_letter = word[0]
+
+            if word[0] != cur_letter:
+                # save current set of words
+                word_list[cur_letter] = cur_word_list
+                cur_word_list = {word} #cur_word_list = [word]
+                cur_letter = word[0]
+            else:
+                # add to current set of words
+                cur_word_list.add(word) #cur_word_list.append(word)
+
+        if len(cur_word_list) > 0:
+            word_list[cur_letter] = cur_word_list
+
+    return word_list
+
+
+
+# returns 'True' if 'word' is a valid Scrabble word
+def is_valid_word_new(word, word_list):
+    first_ltr = word[0]
+
+    if len(word_list[first_ltr]) > 1:
+        # word_list for this letter is split into multiple smaller lists
+        for sub_list in word_list[first_ltr]:
+            if word in sub_list:
+                return True
+        return False
+
+    return word in word_list[first_ltr][0]
+
+
+
+# reads a list of valid Scrabble words
+# returns a dictionary mapping each letter to all words starting with that letter
+# {'a': [...], 'b': [[...], [...]], ...}
+def load_word_list_new(word_list_file):
+    word_list = {}
+
+    cur_letter = None
+    with open(word_list_file, 'r') as file:
+        words = file.readlines()
+        letter_list = []
+        cur_word_list = []
+        word_count = 0
+
+        for word in words:
+            if word_count >= 5000:
+                letter_list.append(cur_word_list)
+                cur_word_list = []
+                word_count = 0
+
+            word = word.strip().lower()
+
+            if cur_letter is None:
+                cur_letter = word[0]
+
+            if word[0] != cur_letter:
+                # save current set of words
+                letter_list.append(cur_word_list)
+                word_list[cur_letter] = letter_list
+                letter_list = []
+                cur_word_list = [word]
+                cur_letter = word[0]
+            else:
+                # add to current set of words
+                cur_word_list.append(word)
+            
+            word_count += 1
+
+        if len(cur_word_list) > 0:
+            letter_list.append(cur_word_list)
+            word_list[cur_letter] = letter_list
+
+    return word_list
 
 
 def print_spaces_line_by_line(spaces):
