@@ -1,6 +1,4 @@
-import re
-import numpy as np
-from itertools import permutations, combinations
+from itertools import permutations
 from time import perf_counter
 
 BOARD_FILE = 'res/small_board.txt'
@@ -58,7 +56,7 @@ def main():
 
     
     # generate a list of all valid horizontal spaces on the board
-    spaces = generate_spaces_h(letters_in_hand, min_word_sz, max_word_sz, len(letters_in_hand))
+    spaces = generate_spaces_h(min_word_sz, max_word_sz, len(letters_in_hand))
     #[print(s) for s in spaces]
     #print()
 
@@ -281,7 +279,6 @@ def fill_all_spaces(min_word_sz, letters_in_hand, spaces):
     perms = {}
     for sz in range(1, len(letters_in_hand)+1):
         perms[sz] = permute_letters(letters_in_hand, sz)
-    letter_list = np.array(list(perms.values()))
 
     total_spaces = len(spaces)
     cur_space = 1
@@ -290,7 +287,7 @@ def fill_all_spaces(min_word_sz, letters_in_hand, spaces):
         cur_space += 1
 
         num_blank = space['num_blank']
-        words = fill_space(space, letter_list[num_blank-1])#perms[num_blank])
+        words = fill_space(space, perms[num_blank])
 
         if words is not None and len(words) > 0:
             # add new 'valid_words' entry to 'space'
@@ -306,7 +303,6 @@ def fill_all_spaces(min_word_sz, letters_in_hand, spaces):
 # returns None if number of blank spaces in 'space' is not equal to number of letters
 def fill_space(space, letter_list):
     filled = []
-    filled_a = np.array([], dtype='str')
 
     start_time = perf_counter()
 
@@ -317,12 +313,11 @@ def fill_space(space, letter_list):
         # horizontal word is good
         word = letters_valid_in_space(letters_to_try, space)
         if word is not None:
-            #filled.append(word)
-            filled_a = np.append(filled_a, word)
+            filled.append(word)
 
     print(f'for loop took: {perf_counter()-start_time} for {len(letter_list)} iterations')
 
-    return filled_a #filled
+    return filled
 
 
 # returns the word formed by putting 'letters' in 'space' if it's valid, otherwise None
@@ -349,8 +344,7 @@ def letters_valid_in_space(letters, space):
 
     if (is_valid_word(temp)):
         return word
-    else:
-        return None
+    return None
 
 
 # most of this is redundant with the parts of generate_spaces_h() that detect
@@ -413,7 +407,7 @@ def get_v_spaces(space, v_word_start_list):
 #     row 1: [ { ... }, ... ]
 #     ...
 # }
-def generate_spaces_h(letters_in_hand, min_word_sz, max_word_sz, max_blanks):
+def generate_spaces_h(min_word_sz, max_word_sz, max_blanks):
     global BOARD
 
     spaces = []
@@ -521,10 +515,10 @@ def is_valid_word(word):
     return word.lower() in SDICT
 
 
-def load_dictionary(file):
+def load_dictionary(dict_file):
     global SDICT
 
-    with open(file, 'r') as file:
+    with open(dict_file, 'r') as file:
         words = file.readlines()
         SDICT = [word.strip().lower() for word in words]
 
@@ -543,9 +537,6 @@ def print_spaces_line_by_line(spaces):
 # letter = [a-z]\*?
 # returns the point value of letter, or 0 if letter contains * (blank tile)
 def get_point_value(letter):
-    #if letter.count('*') > 0:
-    #    return 0
-
     points = {
         'a':1, 'e':1, 'i':1, 'o':1, 'u':1, 'l':1, 'n':1, 's':1, 't':1, 'r':1,
         'd':2, 'g':2,
@@ -568,7 +559,7 @@ def read_board_from_file(board_file):
     with open(board_file) as file:
         rows = [row.strip().replace('.', ' ') for row in file.readlines()]
         for r in range(len(rows)):
-            rows[r] = [space for space in rows[r]]
+            rows[r] = list(rows[r])
         return rows
 
 
