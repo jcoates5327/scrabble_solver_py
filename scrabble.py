@@ -1,5 +1,6 @@
-from itertools import permutations
-from time import perf_counter
+from collections import deque
+from itertools import permutations, chain
+import numpy as np
 
 BOARD_FILE = 'res/test_board.txt'
 REF_BOARD_FILE = 'res/ref_board.txt'
@@ -9,19 +10,21 @@ REF_BOARD = None
 
 
 def main():
-    # TODO: handle vertical words: literally just rotate the board 90 deg. CCW and run again
-    #       use numpy arrays to hopefully gain some performance
-    #       (will also make rotating a lot easier, there's a function for that)
+    # TODO: make sure multiple blank tiles in one word can be handled
     #
-    #       account for limited number of tiles - don't have as many as we want
+    #       handle existing blank tiles on board
+    #       (should switch to lower case to indicate blank rather than appending '*')
     #
-    #       make sure multiple blank tiles in one word can be handled
+    #       can do horizontal and vertical at the same time - just have a BOARD and V_BOARD=BOARD.T
+
     global BOARD, REF_BOARD
 
+    verbose = False
+
     # use '*' for blank tile
-    letters_in_hand = list('rstlne*')
+    letters_in_hand = list('i')
     min_word_sz = 1
-    max_word_sz = 8 # should be <= len(BOARD[0]) (row length)
+    max_word_sz = 15 # should be <= len(BOARD[0]) (row length)
 
     bingo_size = 7
     bingo_bonus = 50
@@ -49,9 +52,12 @@ def main():
         for col in range(len(BOARD[0])):
             if BOARD[row][col] != ' ':
                 REF_BOARD[row][col] = '.'
-                print(f'replacing {REF_BOARD[row][col]} with "." - {BOARD[row][col]} at {[row,col]}')
+                if verbose:
+                    print(f'replacing {REF_BOARD[row][col]} with "." - {BOARD[row][col]} at {[row,col]}')
 
     
+    # ----- HORIZONTAL WORDS -----
+
     # generate a list of all valid horizontal spaces on the board
     spaces = generate_spaces_h(min_word_sz, max_word_sz, len(letters_in_hand))
 
@@ -61,42 +67,88 @@ def main():
     # make sure horizontal words are also valid in any vertical words created
     for space in filled_spaces:
         space['valid_words_final'] = check_valid_words_in_v_spaces(space, word_list)
+        space['orientation'] = 'horizontal'
 
     # calculate highest scoring horizontal word in each space
     filled_spaces = find_highest_scoring_word_in_each_space(filled_spaces)
 
-    num_additional_print = 20
-    print()
-    print(f'-------- top {num_additional_print} space(s) --------')
-    print()
-
-    # TODO create a FIFO(?) queue
-    print_spaces_line_by_line(filled_spaces)
+    # ----- END HORIZONTAL -----
 
 
-    
+    # ----- VERTICAL WORDS -----
+
+    # now handle vertical spaces by running again with BOARD = Transpose(BOARD)
+    # not an efficient solution but it works
+    BOARD = np.array(BOARD)
+    BOARD = BOARD.T
+    BOARD = [list(row) for row in BOARD]
+
+    REF_BOARD = np.array(REF_BOARD)
+    REF_BOARD = REF_BOARD.T
+    REF_BOARD = [list(row) for row in REF_BOARD]
+
+    # generate a list of all valid vertical spaces on the board
+    v_spaces = generate_spaces_h(min_word_sz, max_word_sz, len(letters_in_hand))
+
+    # fill each vertical space with a list of valid Scrabble words we can play with out letters
+    v_filled_spaces = fill_all_spaces(min_word_sz, letters_in_hand, v_spaces, word_list)
+
+    # make sure vertical words are also valid in any horizontal words created
+    for v_space in v_filled_spaces:
+        v_space['valid_words_final'] = check_valid_words_in_v_spaces(v_space, word_list)
+        v_space['orientation'] = 'vertical'
+
+    # calculate highest scoring vertical word in each space
+    v_filled_spaces = find_highest_scoring_word_in_each_space(v_filled_spaces)
+
+    # ----- END VERTICAL -----
+
+    #num_additional_print = 20
+    #last_spaces = deque(maxlen=num_additional_print)    
+        
     high_scoring_spaces = []
-    for space in filled_spaces:
+    for space in filled_spaces + v_filled_spaces:
+        if space['orientation'] == 'vertical':
+            space['start'] = space['start'][::-1]
+
         if space['num_blank'] == bingo_size and space['valid_words_final'] != {}:
             space['high_score'] = space['high_score'] + bingo_bonus
             
         if len(high_scoring_spaces) > 0:
             if space['high_score'] > high_scoring_spaces[0]['high_score']:
+                #last_spaces.appendleft(high_scoring_spaces)
                 high_scoring_spaces = [space]
             elif space['high_score'] == high_scoring_spaces[0]['high_score']:
                 high_scoring_spaces.append(space)
         else:
             high_scoring_spaces.append(space)
-    
 
-    print()
-    print('-------- high scoring space(s) --------')
-    print()
 
-    if len(high_scoring_spaces) < 1:
-        print('no high scoring space found')
+    if verbose:
+        print()
+        #print(f'-------- last {num_additional_print} space(s) --------')
+        print()
+
+        #last_spaces.reverse()
+        #print_spaces_line_by_line(list(chain.from_iterable(list(last_spaces))))
+
+        #col_to_print = 10
+        #slice_to_print = [sp for sp in v_filled_spaces if sp['start'][1] == col_to_print]
+        #print_spaces_line_by_line(slice_to_print)
+
+        print()
+        print('-------- high scoring space(s) --------')
+        print()
+
+        if len(high_scoring_spaces) < 1:
+            print('no high scoring space found')
+        else:
+            print_spaces_line_by_line(high_scoring_spaces)
     else:
-        print_spaces_line_by_line(high_scoring_spaces)
+        for high_scoring_space in high_scoring_spaces:
+            print(f"best move: {high_scoring_space['high_scoring_word']} for {high_scoring_space['high_score']} points")
+            print(f"play {high_scoring_space['orientation']}ly, starting at {high_scoring_space['start']}")
+            print()
     print()
 
 
@@ -195,18 +247,21 @@ def find_highest_scoring_word_in_each_space(spaces):
             point_vals[valid_word_h] = point_val_list
 
             if points >= high_score:
+                # valid_word_h has at least tied the high score
                 if points == high_score:
+                    # valid_word_h has tied the high score
                     high_scoring_words.append(valid_word_h)
                 else:
+                    # valid_word_h has exceeded the high score
                     high_score = points
                     high_scoring_word = valid_word_h
                     high_scoring_words = [high_scoring_word]
-
 
         space['ref_board_space'] = ref_board_space
         space['high_scoring_word'] = high_scoring_words
         space['high_score'] = high_score
         space['point_vals'] = point_vals
+
         new_spaces.append(space)
 
     return new_spaces
@@ -278,7 +333,7 @@ def fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list):
     total_spaces = len(spaces)
     cur_space = 1
     for space in spaces:
-        print(f"filling space #: {cur_space} / {total_spaces}  (size {space['size']})")
+        #print(f"filling space #: {cur_space} / {total_spaces}  (size {space['size']})")
         cur_space += 1
 
         num_blank = space['num_blank']
@@ -537,66 +592,7 @@ def load_word_list(word_list_file):
     return word_list
 
 
-
-# returns 'True' if 'word' is a valid Scrabble word
-def is_valid_word_new(word, word_list):
-    first_ltr = word[0]
-
-    if len(word_list[first_ltr]) > 1:
-        # word_list for this letter is split into multiple smaller lists
-        for sub_list in word_list[first_ltr]:
-            if word in sub_list:
-                return True
-        return False
-
-    return word in word_list[first_ltr][0]
-
-
-
-# reads a list of valid Scrabble words
-# returns a dictionary mapping each letter to all words starting with that letter
-# {'a': [...], 'b': [[...], [...]], ...}
-def load_word_list_new(word_list_file):
-    word_list = {}
-
-    cur_letter = None
-    with open(word_list_file, 'r') as file:
-        words = file.readlines()
-        letter_list = []
-        cur_word_list = []
-        word_count = 0
-
-        for word in words:
-            if word_count >= 5000:
-                letter_list.append(cur_word_list)
-                cur_word_list = []
-                word_count = 0
-
-            word = word.strip().lower()
-
-            if cur_letter is None:
-                cur_letter = word[0]
-
-            if word[0] != cur_letter:
-                # save current set of words
-                letter_list.append(cur_word_list)
-                word_list[cur_letter] = letter_list
-                letter_list = []
-                cur_word_list = [word]
-                cur_letter = word[0]
-            else:
-                # add to current set of words
-                cur_word_list.append(word)
-            
-            word_count += 1
-
-        if len(cur_word_list) > 0:
-            letter_list.append(cur_word_list)
-            word_list[cur_letter] = letter_list
-
-    return word_list
-
-
+# takes in a List of 'spaces'
 def print_spaces_line_by_line(spaces):
     for space in spaces:
         print('{')
