@@ -12,11 +12,7 @@ REF_BOARD = None
 
 
 def main():
-    # TODO: make sure multiple blank tiles in one word can be handled
-    #
-    #       handle existing blank tiles on board
-    #       (should switch to lower case to indicate blank rather than appending '*')
-
+    # TODO: slow for double blank tiles (lots of permutations)
     global BOARD, REF_BOARD
 
     start_run_time = perf_counter()
@@ -24,7 +20,7 @@ def main():
     verbose = False
 
     # use '*' for blank tile
-    letters_in_hand = list('rstlnea')
+    letters_in_hand = list('RSTLNEA')
     min_word_sz = 1
     max_word_sz = 15 # should be <= len(BOARD[0]) (row length)
 
@@ -64,7 +60,7 @@ def main():
     spaces = generate_spaces_h(min_word_sz, max_word_sz, len(letters_in_hand))
 
     # fill each horizontal space with a list of valid Scrabble words we can play with out letters
-    filled_spaces = fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list)
+    filled_spaces = fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list, verbose)
 
     # make sure horizontal words are also valid in any vertical words created
     for space in filled_spaces:
@@ -93,7 +89,7 @@ def main():
     v_spaces = generate_spaces_h(min_word_sz, max_word_sz, len(letters_in_hand))
 
     # fill each vertical space with a list of valid Scrabble words we can play with out letters
-    v_filled_spaces = fill_all_spaces(min_word_sz, letters_in_hand, v_spaces, word_list)
+    v_filled_spaces = fill_all_spaces(min_word_sz, letters_in_hand, v_spaces, word_list, verbose)
 
     # make sure vertical words are also valid in any horizontal words created
     for v_space in v_filled_spaces:
@@ -105,8 +101,8 @@ def main():
 
     # ----- END VERTICAL -----
 
-    #num_additional_print = 20
-    #last_spaces = deque(maxlen=num_additional_print)    
+
+    # ----- FIND HIGH SCORE -----
         
     high_scoring_spaces = []
     for space in filled_spaces + v_filled_spaces:
@@ -118,7 +114,6 @@ def main():
             
         if len(high_scoring_spaces) > 0:
             if space['high_score'] > high_scoring_spaces[0]['high_score']:
-                #last_spaces.appendleft(high_scoring_spaces)
                 high_scoring_spaces = [space]
             elif space['high_score'] == high_scoring_spaces[0]['high_score']:
                 high_scoring_spaces.append(space)
@@ -126,18 +121,9 @@ def main():
             high_scoring_spaces.append(space)
 
 
+    # ----- PRINT RESULTS -----
+
     if verbose:
-        print()
-        #print(f'-------- last {num_additional_print} space(s) --------')
-        print()
-
-        #last_spaces.reverse()
-        #print_spaces_line_by_line(list(chain.from_iterable(list(last_spaces))))
-
-        #col_to_print = 10
-        #slice_to_print = [sp for sp in v_filled_spaces if sp['start'][1] == col_to_print]
-        #print_spaces_line_by_line(slice_to_print)
-
         print()
         print('-------- high scoring space(s) --------')
         print()
@@ -154,9 +140,39 @@ def main():
     print()
     print(f'total run time: {perf_counter()-start_run_time}')
 
+
+
+def check_valid_words_in_v_spaces(space, word_list):
+    # don't need to check v_space if there are none
+    if len(space['v_spaces']) < 1:
+        return dict.fromkeys(space['valid_words'])
+
+    valid_words_final = {}
+    for h_word_to_try in space['valid_words']:
+        valid_words_v = []
+        v_spaces = space['v_spaces']
+
+        # put 'valid_word' in each 'v_space'
+        # if invalid for any 'v_space', then 'valid_word' is invalid for 'space'
+        for v_space in v_spaces:
+            # 'v_space' start column - 'space' start col. gives index of letter in 'word_to_try'
+            #   that is at the intersection of both spaces
+            index = abs(v_space['start'][1] - space['start'][1])
+            letter_to_put_in_v_blank = h_word_to_try[index]
+            v_blank_index = v_space['ltrs'].index(' ')
+
+            v_word_to_try = ''.join(v_space['ltrs']).replace(' ', letter_to_put_in_v_blank)
+            if is_valid_word(v_word_to_try, word_list):
+                valid_words_v.append(v_word_to_try)
+
+        if len(valid_words_v) == len(v_spaces):
+            valid_words_final[h_word_to_try] = valid_words_v
+
+    return valid_words_final
+
 # takes in a 'space', returns a list of the 'valid_words' of 'space' that also make valid
 #   words in each 'v_space'
-def check_valid_words_in_v_spaces(space, word_list):
+def check_valid_words_in_v_spaces_old_blank_method(space, word_list):
     # don't need to check v_space if there are none
     if len(space['v_spaces']) < 1:
         return dict.fromkeys(space['valid_words'])
@@ -269,51 +285,36 @@ def find_highest_scoring_word_in_each_space(spaces):
     return new_spaces
 
 
+
 # takes in a string of letters, returns the number of scrabble points these letters add up to
 # '*' counts as a blank tile and is worth 0 points
 def calculate_points(letters, ref_board_space):
-    rev_word_letters = letters[::-1]
-    rev_ref_space = ref_board_space[::-1]
-
-    # don't count points for blank tiles, they're worth nothing
-    # reverse the word then add up points - that way if a '*' is detected just skip next letter
-    # ('*' always comes directly after a letter)
     points = 0
     word_bonus = 0
     skip_next = False
-    for c in range(len(rev_word_letters)):
-        if rev_word_letters[c] == '*':
-            # skip next iteration if it's a blank space, counts for 0 points
-            # still need to check for word bonuses, however
-            rev_ref_space.insert(c, '*')
-            if rev_ref_space[c+1] == 'T':
+    for i, letter in enumerate(letters):
+        # if 'letter' is not upper case then it is a blank tile and is ignored for scoring purposes
+        if letter.isupper():
+            letter_points = get_point_value(letter)
+
+            # check for bonuses
+            ref_letter = ref_board_space[i]
+            if ref_letter == 'T':
                 word_bonus += 3
-            elif rev_ref_space[c+1] == 'D':
+            elif ref_letter == 'D':
                 word_bonus += 2
-            skip_next = True
-        else:
-            if not skip_next:
-                letter_points = get_point_value(rev_word_letters[c])
+            elif ref_letter == 't':
+                letter_points *= 3
+            elif ref_letter == 'd':
+                letter_points *= 2
 
-                # check for bonuses
-                ref_letter = rev_ref_space[c]
-                if ref_letter == 'T':
-                    word_bonus += 3
-                elif ref_letter == 'D':
-                    word_bonus += 2
-                elif ref_letter == 't':
-                    letter_points *= 3
-                elif ref_letter == 'd':
-                    letter_points *= 2
-
-                points += letter_points
-            else:
-                skip_next = False
+            points += letter_points
 
     if word_bonus > 0:
         points *= word_bonus
 
     return points
+
 
 # takes in a list of board spaces and returns a list of spaces, each with a new entry containing all
 #   valid Scrabble words that can be played in the space
@@ -322,7 +323,7 @@ def calculate_points(letters, ref_board_space):
 # [ {'start': [0,0], 'size': 2, 'num_blank': 1, 'valid_words': ['as', 'is'], ... },
 #   { ... },
 #   { ... } ]
-def fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list):
+def fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list, verbose):
     global BOARD
 
     filled_spaces = []
@@ -335,10 +336,11 @@ def fill_all_spaces(min_word_sz, letters_in_hand, spaces, word_list):
     total_spaces = len(spaces)
     cur_space = 1
     for space in spaces:
-        #print(f"filling space #: {cur_space} / {total_spaces}  (size {space['size']})")
         cur_space += 1
 
         num_blank = space['num_blank']
+        if verbose:
+            print(f'filling space: {cur_space} / {len(spaces)}')
         words = fill_space(space, perms[num_blank], word_list)
 
         if words is not None and len(words) > 0:
@@ -368,6 +370,7 @@ def fill_space(space, letter_list, word_list):
     return filled
 
 
+
 # returns the word formed by putting 'letters' in 'space' if it's valid, otherwise None
 def letters_valid_in_space(letters, space, word_list):
     BLANK_SPACE_CHAR = ' '
@@ -384,13 +387,7 @@ def letters_valid_in_space(letters, space, word_list):
 
     word = ''.join(new_space)
 
-    # temporarily remove '*' blank space indicator for word validation
-    if word.count('*') > 0:
-        temp = word.replace('*', '')
-    else:
-        temp = word
-
-    if (is_valid_word(temp, word_list)):
+    if (is_valid_word(word, word_list)):
         return word
 
     return None
@@ -531,23 +528,35 @@ def generate_spaces_h(min_word_sz, max_word_sz, max_blanks):
 
                     spaces.append(new_space)
 
-
     return spaces
+
 
 
 # returns a list of all permutations of 'letters' of size 'size'
 
 # [ ('a', 'b', 'c'), ('a', 'c', 'b'), ... ]
 def permute_letters(letters, size):
-    if letters.count('*') > 0:
+    # check for blank tiles
+    num_blank_tiles = letters.count('*')
+    if num_blank_tiles > 0:
         # handle blank tile(s)
         # replace '*' with every letter a-z, find all perms
         perms = []
         for c in range(97, 123): # 'a' to 'z'
-            # keeping the '*' so we know which letter is a blank tile for scoring purposes
-            new_letters = [l.replace('*',f'{chr(c)}*') for l in letters]
-            for p in list(permutations(new_letters, size)):
-                perms.append(p)
+            # letters made from blank tiles will be lower case to differentiate them
+            blank_index = letters.index('*', 0)
+            new_letters = list(letters)
+            new_letters[blank_index] = chr(c)
+
+            # replace second '*' if necessary
+            if num_blank_tiles == 2:
+                for cc in range(97, 123):
+                    blank_index_2 = letters.index('*', blank_index+1)
+                    new_letters[blank_index_2] = chr(cc)
+
+                    [perms.append(p) for p in list(permutations(new_letters, size))]
+            else:
+                [perms.append(p) for p in list(permutations(new_letters, size))]
 
         # stupid - remove duplicates
         perms = list(dict.fromkeys(perms))
@@ -559,7 +568,7 @@ def permute_letters(letters, size):
 
 # returns 'True' if 'word' is a valid Scrabble word
 def is_valid_word(word, word_list):
-
+    word = word.upper()
     return word in word_list[word[0]]
 
 
@@ -575,7 +584,7 @@ def load_word_list(word_list_file):
         cur_letter = None
 
         for word in words:
-            word = word.strip().lower()
+            word = word.strip().upper()
 
             if cur_letter is None:
                 cur_letter = word[0]
@@ -611,13 +620,13 @@ def print_spaces_line_by_line(spaces):
 # returns the point value of letter, or 0 if letter contains * (blank tile)
 def get_point_value(letter):
     points = {
-        'a':1, 'e':1, 'i':1, 'o':1, 'u':1, 'l':1, 'n':1, 's':1, 't':1, 'r':1,
-        'd':2, 'g':2,
-        'b':3, 'c':3, 'm':3, 'p':3,
-        'f':4, 'h':4, 'v':4, 'w':4, 'y':4,
-        'k':5,
-        'j':8, 'x':8,
-        'q':10, 'z':10
+        'A':1, 'E':1, 'I':1, 'O':1, 'U':1, 'L':1, 'N':1, 'S':1, 'T':1, 'R':1,
+        'D':2, 'G':2,
+        'B':3, 'C':3, 'M':3, 'P':3,
+        'F':4, 'H':4, 'V':4, 'W':4, 'Y':4,
+        'K':5,
+        'J':8, 'X':8,
+        'Q':10, 'Z':10
     }
     return points[letter]
 
