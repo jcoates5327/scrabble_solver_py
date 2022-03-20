@@ -1,10 +1,12 @@
 from collections import deque
 from itertools import permutations, chain
+from time import perf_counter
 import numpy as np
 
 BOARD_FILE = 'res/test_board.txt'
 REF_BOARD_FILE = 'res/ref_board.txt'
 WORD_LIST_FILE = 'res/CSW22.txt'
+
 BOARD = None
 REF_BOARD = None
 
@@ -14,15 +16,15 @@ def main():
     #
     #       handle existing blank tiles on board
     #       (should switch to lower case to indicate blank rather than appending '*')
-    #
-    #       can do horizontal and vertical at the same time - just have a BOARD and V_BOARD=BOARD.T
 
     global BOARD, REF_BOARD
+
+    start_run_time = perf_counter()
 
     verbose = False
 
     # use '*' for blank tile
-    letters_in_hand = list('i')
+    letters_in_hand = list('rstlnea')
     min_word_sz = 1
     max_word_sz = 15 # should be <= len(BOARD[0]) (row length)
 
@@ -150,7 +152,7 @@ def main():
             print(f"play {high_scoring_space['orientation']}ly, starting at {high_scoring_space['start']}")
             print()
     print()
-
+    print(f'total run time: {perf_counter()-start_run_time}')
 
 # takes in a 'space', returns a list of the 'valid_words' of 'space' that also make valid
 #   words in each 'v_space'
@@ -557,6 +559,7 @@ def permute_letters(letters, size):
 
 # returns 'True' if 'word' is a valid Scrabble word
 def is_valid_word(word, word_list):
+
     return word in word_list[word[0]]
 
 
